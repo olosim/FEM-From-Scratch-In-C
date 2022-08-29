@@ -21,6 +21,7 @@ int create_element_stiffness_matrix(double *Ke, double *C, int *num_gp, double *
 int create_global_stiffness_matrix(double *K, int* nrk, int *num_ele, int *num_ele_x, double *len_ele_x,
 double *len_ele_y, int *num_gp, double *thickness, double *C);
 int apply_bcs(double *Kmod, int *bc, double *F, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x);
+int solve_for_displscements(double *Kmod, double *U, int *num_dof);
 
 int main (void) {
     /* Array Format Explanation (uncomment '//' to show examples)
@@ -98,8 +99,18 @@ int main (void) {
     apply_bcs(Kmod, bc, F, &num_ele_x, &num_ele_y, &num_dof, &len_ele_x);
     print_array_col_major("Modified stiffness matrix, Kmod:", Kmod, num_dof, num_dof);
     print_array_col_major("Node force vector, F:", F, num_dof, 1);
-    
-    
+
+    double U[num_dof];
+    memcpy(U, F, sizeof(F));
+    solve_for_displscements(Kmod, U, &num_dof);  /* Kmod*U = F */
+    print_array_col_major("Displacement vector, U:", U, num_dof, 1);
+    double solution_fem = U[2*(num_ele_x/2) + 1 + 0];  /* solution_fem = U[...][0] so in the middle at the bottom.*/ 
+    double solution_ref = -0.3459;
+    double epsilon = fabs(solution_fem - solution_ref)/solution_ref;
+    printf("\nFEM Solution, u = %f\n", solution_fem);
+    printf("Reference Solution, u = %f\n", solution_ref);
+    printf("Epsilon Error = %f\n", epsilon);
+
     exit(0);
 }
 
@@ -369,4 +380,15 @@ int apply_bcs(
     }
 
     return 0;
+}
+
+int solve_for_displscements(double *Kmod, double *U, int *num_dof) {
+    /* Kmod*U = F */
+    lapack_int info_dgels_U = 0;
+
+    info_dgels_U = LAPACKE_dgels(
+        LAPACK_COL_MAJOR, 'N', *num_dof, *num_dof, 1, Kmod, *num_dof, U, *num_dof);
+    printf("info_dgels_U: %d\n", info_dgels_U);
+
+    return 0; 
 }
