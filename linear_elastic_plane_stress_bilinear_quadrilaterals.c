@@ -4,6 +4,7 @@
  * gcc -Wall linear_elastic_plane_stress_bilinear_quadrilaterals.c -llapacke -llapack -lblas -lcblas -lm 
  */
 
+#include <complex.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@ int create_elasticity_matrix_isotropic_plane_stress(double *C, double *pe_modulu
 int create_element_stiffness_matrix(double *Ke, double *C, int *num_gp, double *X, double *thickness);
 int create_global_stiffness_matrix(double *K, int* nrk, int *num_ele, int *num_ele_x, double *len_ele_x,
 double *len_ele_y, int *num_gp, double *thickness, double *C);
+int apply_bcs(double *Kmod, int *bc, double *F, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x);
 
 int main (void) {
     /* Array Format Explanation (uncomment '//' to show examples)
@@ -83,6 +85,21 @@ int main (void) {
         K, &num_dof, &num_ele, &num_ele_x, &len_ele_x, &len_ele_y, &num_gp, &thickness, C);
     print_array_col_major("Global Stiffness Matrix without B.C.'s, K:", K, num_dof, num_dof);
 
+    double Kmod[num_dof*num_dof];
+    memcpy(Kmod, K, sizeof(K));
+    int bc[num_dof];
+    for (int i = 0; i < num_dof; i++) {
+        bc[i] = 0;
+    }
+    double F[num_dof];
+    for (int i = 0; i < num_dof; i++) {
+        F[i] = 0.0;
+    }
+    apply_bcs(Kmod, bc, F, &num_ele_x, &num_ele_y, &num_dof, &len_ele_x);
+    print_array_col_major("Modified stiffness matrix, Kmod:", Kmod, num_dof, num_dof);
+    print_array_col_major("Node force vector, F:", F, num_dof, 1);
+    
+    
     exit(0);
 }
 
@@ -313,6 +330,43 @@ int create_global_stiffness_matrix(
     }
     /* Debugging */
     print_array_col_major_int("Last element freedom table, eftab:", eftab, 8, *num_ele);
+
+    return 0;
+}
+
+int apply_bcs(
+    double *Kmod, int *bc, double *F, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x) {
+    int start;
+    int end;
+
+    /* Dirichlet (Displacement) Boundary Conditions */
+    for (int i = 0; i < (*num_ele_y + 1); i++) {
+        bc[2*(*num_ele_x + 1)*i + 0] = 1;  /* First loop bc[0][0] = 1 */
+        bc[(2*(*num_ele_x + 1)*i + 1) + 0] = 1;  /* First loop bc[1][0] = 1 */
+        bc[2*(*num_ele_x + 1)*i + 2*(*num_ele_x) + 0] = 1;
+        bc[(2*(*num_ele_x + 1)*i + 2*(*num_ele_x) + 1) + 0] = 1;
+    }
+
+    /* print_array_col_major_int("Boundary Conditions, bc:", bc, *num_dof, 1); */
+
+    for (int i = 0; i < *num_dof; i++) {
+        if (bc[i] == 1) {
+            for (int j = 0; j < *num_dof; j++) {
+                Kmod[i + j*(*num_dof)] = 0.0;  /* First loop Kmod[0][0] = 0.0 */
+                Kmod[j + i*(*num_dof)] = 0.0;
+            }
+            Kmod[i + i*(*num_dof)] = 1.0;
+        }
+    }
+
+    start = 2*(*num_ele_x + 1)*(*num_ele_y) + 4; 
+    end = 2*(*num_ele_x + 1)*(*num_ele_y) + 2*(*num_ele_x) + 1;
+    /* printf("start, %d, end, %d\n", start, end); */
+
+    for (int i = start; i < end; ) {
+        F[i - 1] = -1*(*len_ele_x);
+        i += 2;
+    }
 
     return 0;
 }
