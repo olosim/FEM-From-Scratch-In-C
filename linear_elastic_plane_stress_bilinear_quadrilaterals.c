@@ -4,10 +4,7 @@
  * gcc -Wall linear_elastic_plane_stress_bilinear_quadrilaterals.c -llapacke -llapack -lblas -lcblas -lm 
  */
 
-#include <complex.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -20,7 +17,7 @@ int create_elasticity_matrix_isotropic_plane_stress(double *C, double *pe_modulu
 int create_element_stiffness_matrix(double *Ke, double *C, int *num_gp, double *X, double *thickness);
 int create_global_stiffness_matrix(double *K, int* nrk, int *num_ele, int *num_ele_x, double *len_ele_x,
 double *len_ele_y, int *num_gp, double *thickness, double *C);
-int apply_bcs(double *Kmod, int *bc, double *F, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x);
+int apply_bcs(double *Kmod, int *bc, double *Fmod, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x);
 int solve_for_displscements(double *Kmod, double *U, int *num_dof);
 
 int main (void) {
@@ -58,7 +55,7 @@ int main (void) {
     int num_gp = 1;
 
 
-    int num_ele = num_ele_x * num_ele_y;
+    int num_ele = num_ele_x*num_ele_y;
     int num_dof = 2*((num_ele_x + 1)*(num_ele_y + 1));
 
     double len_ele_x = len_x/num_ele_x;
@@ -92,17 +89,17 @@ int main (void) {
     for (int i = 0; i < num_dof; i++) {
         bc[i] = 0;
     }
-    double F[num_dof];
+    double Fmod[num_dof];
     for (int i = 0; i < num_dof; i++) {
-        F[i] = 0.0;
+        Fmod[i] = 0.0;
     }
-    apply_bcs(Kmod, bc, F, &num_ele_x, &num_ele_y, &num_dof, &len_ele_x);
+    apply_bcs(Kmod, bc, Fmod, &num_ele_x, &num_ele_y, &num_dof, &len_ele_x);
     print_array_col_major("Modified stiffness matrix, Kmod:", Kmod, num_dof, num_dof);
-    print_array_col_major("Node force vector, F:", F, num_dof, 1);
+    print_array_col_major("Modified node force vector, Fmod:", Fmod, num_dof, 1);
 
     double U[num_dof];
-    memcpy(U, F, sizeof(F));
-    solve_for_displscements(Kmod, U, &num_dof);  /* Kmod*U = F */
+    memcpy(U, Fmod, sizeof(Fmod));
+    solve_for_displscements(Kmod, U, &num_dof);  /* Kmod*U = Fmod */
     print_array_col_major("Displacement vector, U:", U, num_dof, 1);
     double solution_fem = U[2*(num_ele_x/2) + 1 + 0];  /* solution_fem = U[...][0] so in the middle at the bottom.*/ 
     double solution_ref = -0.3459;
@@ -110,6 +107,8 @@ int main (void) {
     printf("\nFEM Solution, u = %f\n", solution_fem);
     printf("Reference Solution, u = %f\n", solution_ref);
     printf("Epsilon Error = %f\n", epsilon);
+
+    /* TODO: recover reaction forces via F = K*U */
 
     exit(0);
 }
@@ -150,20 +149,20 @@ int print_array_col_major_int(char *msg, int *array, int nrow, int ncol) {
     return 0;
 }
 
-int create_elasticity_matrix_isotropic_plane_stress(double *C, double *pe_modulus, double *pnu) {
+int create_elasticity_matrix_isotropic_plane_stress(double *C, double *e_modulus, double *nu) {
     int nr = 3;
     int ne = 9;
-    int mul_factor = *pe_modulus/(1.0 - pow(*pnu, 2.0));
+    int mul_factor = *e_modulus/(1.0 - pow(*nu, 2.0));
 
     for (int i = 0; i < ne; i++) {
         C[i] = 0.0;
     }
 
     C[0 + 0*nr] = 1;  /* C[0][0] = 1 */
-    C[0 + 1*nr] = *pnu;
-    C[1 + 0*nr] = *pnu;
+    C[0 + 1*nr] = *nu;
+    C[1 + 0*nr] = *nu;
     C[1 + 1*nr] = 1;
-    C[2 + 2*nr] = (1.0 - *pnu)/2.0;
+    C[2 + 2*nr] = (1.0 - *nu)/2.0;
 
     for (int i = 0; i < ne; i++) {
         C[i] *= mul_factor;
@@ -231,7 +230,7 @@ int create_element_stiffness_matrix(double *Ke, double *C, int *num_gp, double *
     /* First we calculate dNidx and dNidy for each shape function,
      * then assenble B from dNidx and dNidy starting with an empty B matrix. */
 
-    /* dNidx[2x4] = Jinv[2x2]*P[2*4] */
+    /* dNidx[2x4] = Jinv[2x2]*P[2x4] */
     double dNidx[2*4];
     for (int i = 0; i < 8; i++) {
         dNidx[i] = 0.0;
@@ -346,7 +345,8 @@ int create_global_stiffness_matrix(
 }
 
 int apply_bcs(
-    double *Kmod, int *bc, double *F, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x) {
+    double *Kmod, int *bc, double *Fmod, int *num_ele_x, int *num_ele_y, int *num_dof, double *len_ele_x) {
+    /* Apply boundary conditions via the modification method */
     int start;
     int end;
 
@@ -366,7 +366,8 @@ int apply_bcs(
                 Kmod[i + j*(*num_dof)] = 0.0;  /* First loop Kmod[0][0] = 0.0 */
                 Kmod[j + i*(*num_dof)] = 0.0;
             }
-            Kmod[i + i*(*num_dof)] = 1.0;
+            /* Homogenieus direchlet B.C.s: */
+            Kmod[i + i*(*num_dof)] = 1.0;  /* such that 1*u = 0.0 */
         }
     }
 
@@ -375,7 +376,7 @@ int apply_bcs(
     /* printf("start, %d, end, %d\n", start, end); */
 
     for (int i = start; i < end; ) {
-        F[i - 1] = -1*(*len_ele_x);
+        Fmod[i - 1] = -1*(*len_ele_x);
         i += 2;
     }
 
@@ -383,7 +384,7 @@ int apply_bcs(
 }
 
 int solve_for_displscements(double *Kmod, double *U, int *num_dof) {
-    /* Kmod*U = F */
+    /* Kmod*U = Fmod */
     lapack_int info_dgels_U = 0;
 
     info_dgels_U = LAPACKE_dgels(
